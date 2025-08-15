@@ -1,0 +1,382 @@
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+
+project.ext.set("mod_group_id", 'novamachina')
+project.ext.set("mod_authors", 'NovaMachina')
+project.ext.set("mod_license", 'CC BY-NC-SA 4.0')
+project.ext.set("minecraft_version", '1.21.4')
+project.ext.set("minecraft_version_range", '[1.21.4,1.22)')
+project.ext.set("neogradle.subsystems.parchment.minecraftVersion",' 1.21')
+project.ext.set("neogradle.subsystems.parchment.mappingsVersion", '2024.07.28')
+project.ext.set("neo_version", '21.4.20-beta')
+project.ext.set("neo_version_range", '[21.4.20-beta,22)')
+project.ext.set("loader_version_range", '[4,)')
+project.ext.set("resource_pack_format", '15')
+project.ext.set("data_pack_format", '10')
+project.ext.set("exnihilo_version", '1.21.3-7.0.0-build.LOCAL')
+project.ext.set("exnihilo_version_range", '[7.0.0, 8.0.0)')
+project.ext.set("novacore_version", '1.21.4-4.0.0-build.5')
+project.ext.set("novacore_version_range", '[4.0.0, 5.0.0)')
+
+ext.getChangelogText =  {
+    return project.file('CHANGELOG.md').text
+}
+
+ext.sourceSetConfig = {
+    java.sourceSets {
+        main {
+            java {
+                srcDirs = ["src/main/java"]
+            }
+            resources {
+                srcDirs = ["src/main/resources", "src/generated/resources"]
+            }
+            runs {
+                modIdentifier = project.mod_id
+            }
+        }
+    }
+
+    configurations {
+        runtimeClasspath.extendsFrom localRuntime
+    }
+}
+
+ext.repos = {
+    repositories {
+        mavenLocal()
+        maven { url "https://maven.blamejared.com" }    // Patchouli, bookshelf, gamestages, JEI
+        maven { url "https://maven.k-4u.nl" } // McJtyLib, TOP
+        maven { url 'https://dl.cloudsmith.io/public/novamachina-mods/release/maven/' } // NovaMachina Mods - Release
+        maven { url 'https://dl.cloudsmith.io/public/novamachina-mods/snapshot/maven/' } // NovaMachina Mods - Snapshots
+        maven { url "https://www.cursemaven.com" } // Jade
+        maven { url 'https://maven.k-4u.nl/' }
+        maven { url 'https://maven.shedaniel.me' }
+        maven { url 'https://maven.architectury.dev/' }
+    }
+}
+
+ext.mc = {
+    dependencies.implementation "net.neoforged:neoforge:${neo_version}"
+}
+
+ext.exn = {
+    if (findProject(':ExNihiloSequentia') != null) {
+        dependencies.implementation project(':ExNihiloSequentia')
+    } else {
+        dependencies.implementation "novamachina.exnihilosequentia:exnihilosequentia:${exnihilo_version}"
+    }
+}
+
+ext.novacore = {
+    if (findProject(':NovaCore') != null) {
+        dependencies.api project(':NovaCore')
+    } else {
+        dependencies.api "novamachina.novacore:novacore:${novacore_version}"
+    }
+}
+
+ext.modrinthConfig = { opt, req, versions ->
+    tasks.modrinth.enabled = System.getenv("MODRINTH_TOKEN") != null
+    modrinth {
+        token = System.getenv("MODRINTH_TOKEN")
+        if(project.hasProperty("modrinth_id")) {
+            projectId = project.modrinth_id
+        } else {
+            projectId = project.mod_id
+        }
+        versionNumber = project.version
+        versionType = project.release_type
+        uploadFile = project.jar
+        gameVersions = [ project.minecraft_version ]
+        changelog = getChangelogText(project)
+        loaders = ["neoforge"]
+        dependencies {
+            opt.each { lib ->
+                optional.project lib
+            }
+            req.each { lib ->
+                required.project lib
+            }
+        }
+    }
+}
+
+ext.cfdeps = { optional, required, versions ->
+    tasks.curseforge.enabled = System.getenv("CURSEFORGE_KEY") != null
+    project.curseforge.apiKey = System.getenv("CURSEFORGE_KEY") ?: 'dummy_key'
+    curseforge {
+        project {
+            id = project.curseforge_id
+            changelog = getChangelogText(project)
+            changelogType = "markdown"
+            addGameVersion project.minecraft_version
+            addGameVersion "NeoForge"
+            releaseType = project.release_type
+            mainArtifact(project.jar) {}
+            if(optional.size() > 0 || required.size() > 0) {
+                relations {
+                    optional.each { lib ->
+                        optionalLibrary lib
+                    }
+                    required.each { lib ->
+                        requiredDependency lib
+                    }
+                }
+            }
+        }
+    }
+}
+
+ext.at = {
+    minecraft {
+        accessTransformers {
+            file('src/main/resources/META-INF/accesstransformer.cfg')
+        }
+    }
+}
+
+ext.runConfigurations = {
+    runs {
+        configureEach {
+            systemProperty 'forge.logging.markers', 'REGISTRIES'
+            systemProperty 'forge.logging.console.level', 'debug'
+            modSource project.sourceSets.main
+        }
+
+        client {
+            systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        server {
+            systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
+            programArgument '--nogui'
+        }
+
+        gameTestServer {
+            systemProperty 'forge.enabledGameTestNamespaces', project.mod_id
+        }
+
+        clientData {
+            programArguments.addAll(
+                    '--mod', project.mod_id,
+                    '--all',
+                    '--output', file('src/generated/resources/').getAbsolutePath(),
+                    '--existing', file('src/main/resources/').getAbsolutePath()
+            )
+        }
+    }
+}
+
+ext.jars = {
+    jar {
+        duplicatesStrategy = DuplicatesStrategy.INCLUDE
+        manifest {
+            attributes([
+                    "Specification-Title"     : project.mod_id,
+                    "Specification-Vendor"    : project.mod_authors,
+                    "Specification-Version"   : "1", // We are version 1 of ourselves
+                    "Implementation-Title"    : project.name,
+                    "Implementation-Version"  : project.jar.archiveVersion,
+                    "Implementation-Vendor"   : project.mod_authors,
+                    "Implementation-Timestamp": new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+            ])
+        }
+    }
+}
+
+ext.publish = {
+    publishing {
+        publications {
+            register('mavenJava', MavenPublication) {
+                groupId group
+                artifactId System.getenv("MAVEN_ARTIFACT") ?: mod_id
+                version version
+                from components.java
+
+                pom {
+                    name = mod_name
+                    packaging = 'jar'
+                    description = mod_description
+                    scm {
+                        url = 'https://github.com/NovaMachina-Mods/' + project.github_id + '.git'
+                    }
+                    issueManagement {
+                        system = 'github'
+                        url = 'https://github.com/NovaMachina-Mods/' + project.github_id + '/issues'
+                    }
+                    licenses {
+                        license {
+                            name = mod_license
+                            distribution = 'repo'
+                        }
+                    }
+                }
+            }
+        }
+        repositories {
+            maven {
+                name = "cloudsmith"
+                url = "https://maven.cloudsmith.io/novamachina-mods/release/"
+                def releaseRepoUrl = "https://maven.cloudsmith.io/novamachina-mods/release/"
+                def snapshotRepoUrl = "https://maven.cloudsmith.io/novamachina-mods/snapshot/"
+                url = version.endsWith('SNAPSHOT') ? snapshotRepoUrl : releaseRepoUrl
+                credentials {
+                    username = System.getenv("MAVEN_USERNAME")
+                    password = System.getenv("MAVEN_PASSWORD")
+                }
+            }
+        }
+    }
+}
+
+ext.localGitHook = {
+    project.tasks.register('installLocalGitHook', Copy) {
+        group = "management"
+        description = "Installs git hooks into their proper location"
+
+        String hooksDir = '.git/hooks'
+        if(file("${project.projectDir}/.git").isFile()) {
+            String fileContents = new File(project.projectDir, '.git').text
+            hooksDir = "${fileContents.split(": ")[1].dropRight(1)}/hooks"
+        }
+
+        from new File(project.projectDir, 'scripts/pre-commit')
+        into { new File(hooksDir)}
+        fileMode 0775
+    }
+
+    project.tasks.build.dependsOn(project.tasks.installLocalGitHook)
+    project.tasks.build.finalizedBy(project.tasks.publishToMavenLocal)
+}
+
+ext.processResources = { deps ->
+    project.tasks.getByName("processResources") {
+        outputs.upToDateWhen { false }
+        filesMatching('pack.mcmeta') {
+            processJsonFile([
+                    description : project.mod_name + " resources",
+                    pack_format : resource_pack_format,
+                    "forge:resource_pack_format" : resource_pack_format,
+                    "forge:data_pack_format" : data_pack_format
+            ], getFile())
+        }
+        filesMatching('META-INF/neoforge.mods.toml') {
+            def lines = [
+                    'modLoader="javafml"',
+                    'loaderVersion="' + loader_version_range + '"',
+                    'issueTrackerURL="https://github.com/NovaMachina-Mods/' + project.github_id + '/issues"',
+                    'license="' + mod_license + '"',
+                    '',
+                    '[[mods]]',
+                    '    modId="' + project.mod_id + '"',
+                    '    logoFile="logo.png"',
+                    '    version="' + project.mod_version + '"',
+                    '    displayName="' + project.mod_name + '"',
+                    '    updateJSONURL="https://api.modrinth.com/updates/' + project.modrinth_project_id + '/forge_updates.json"',
+                    '    authors="' + project.mod_authors + '"',
+                    "    description='''" + project.mod_description + "'''",
+                    '',
+                    '[[dependencies.' + project.mod_id + ']]',
+                    '    modId="neoforge"',
+                    '    type="required"',
+                    '    versionRange="' + project.neo_version_range + '"',
+                    '    ordering="NONE"',
+                    '    side="BOTH"',
+                    '',
+                    '[[dependencies.' + project.mod_id + ']]',
+                    '    modId="minecraft"',
+                    '    type="required"',
+                    '    versionRange="' + project.minecraft_version_range + '"',
+                    '    ordering="NONE"',
+                    '    side="BOTH"',
+                    '',
+            ]
+            deps.each {
+                dependency -> {
+                    lines.add('[[dependencies.' + project.mod_id + ']]');
+                    dependency.each {
+                        entry ->
+                            {
+                                if (entry.value instanceof Boolean || entry.value instanceof Number) {
+                                    lines.add('   ' + entry.key + '=' + entry.value)
+                                } else {
+                                    lines.add('   ' + entry.key + '="' + entry.value + '"')
+                                }
+                            }
+                    }
+                    lines.add('');
+                }
+            }
+
+            BufferedWriter writer = new BufferedWriter(new FileWriter(file));
+            lines.each {
+                line -> {
+                    writer.write(line)
+                    writer.newLine()
+                }
+            }
+            writer.close();
+        }
+    }
+    project.tasks.processResources.dependsOn(project.tasks.compileJava)
+}
+
+ext.processJsonFile = { properties, file ->
+    String fileContents = file.text.replaceAll(/\$\{[^}]*\}/, "0")
+    def input = new JsonSlurper().parseText(fileContents)
+    processJson(properties, input)
+    BufferedWriter writer = new BufferedWriter(new FileWriter(file));
+    writer.write(JsonOutput.prettyPrint(JsonOutput.toJson(input)));
+    writer.close();
+}
+
+ext.processJson = { properties, object ->
+    object.each {
+        entry -> {
+            if (entry.value instanceof Map) {
+                processJson(properties, entry.value)
+            } else if (properties.keySet().contains(entry.key)) {
+                entry.value = properties.get(entry.key)
+                if(entry.value.isNumber()) {
+                    entry.value = entry.value.toInteger()
+                }
+            }
+        }
+    }
+}
+
+ext.getBuildNumber = {
+    String refName = System.getenv("GITHUB_REF_NAME") ?: "local-build"
+    if(refName.endsWith("dev")) {
+        return "SNAPSHOT"
+    }
+    return System.getenv("GITHUB_RUN_NUMBER") ?: "LOCAL"
+}
+
+ext.spotlessConfig = {
+    spotless {
+//        ratchetFrom 'origin/1.20'
+        format 'misc', {
+            target '*.gradle', '*.md', '.gitignore'
+
+            trimTrailingWhitespace()
+            indentWithSpaces(2)
+            endWithNewline()
+        }
+        java {
+            removeUnusedImports()
+            trimTrailingWhitespace()
+            googleJavaFormat()
+        }
+    }
+}
+
+ext.ideaConfig = {
+    idea {
+        module {
+            downloadSources = true
+            downloadJavadoc = true
+        }
+    }
+}
